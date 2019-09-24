@@ -1,0 +1,34 @@
+{
+	"name": "variable-irony",
+	"version": "0.0.1",
+	"description": "A pseudo-variable library for managing cached data and environment variables.",
+	"main": "lib/index.js",
+	"scripts": {
+		"test": "jest"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/m3tior/variable-irony.git"
+	},
+	"keywords": [
+		"pseudo-variables",
+		"cache",
+		"localdata",
+		"environment",
+		"environment-variables",
+		"utilities"
+	],
+	"author": "Ruby Allison Rose",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/m3tior/variable-irony/issues"
+	},
+	"homepage": "https://github.com/m3tior/variable-irony#readme",
+	"browser": {
+		"fs": "nop",
+		"path": "nop"
+	},
+	"devDependencies": {
+		"nop": "1.0.0"
+	}
+}
