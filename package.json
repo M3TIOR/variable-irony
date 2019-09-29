@@ -4,9 +4,9 @@
 	"description": "A pseudo-variable library for managing cached data and environment variables.",
 	"main": "lib",
 	"scripts": {
-		"test": "node_modules/bin/eslint lib tests; node_modules/bin/jest",
-		"lint": "node_modules/bin/eslint lib tests;",
-		"build-docs": "node_modules/bin/jsdoc -c ./.jsdoc.json;"
+		"test": "toriel 'lib/**/*.js'; jest;",
+		"lint": "toriel 'lib/**/*.js'",
+		"build-docs": "jsdoc -c ./.jsdoc.json;"
 	},
 	"repository": {
 		"type": "git",
@@ -26,10 +26,11 @@
 		"url": "https://github.com/m3tior/variable-irony/issues"
 	},
 	"homepage": "https://github.com/m3tior/variable-irony#readme",
-	"dependencies": {
-		"node": "^12.8.0"
-	},
 	"devDependencies": {
-		"eslint": "^6.4.0"
+		"eslint": "^6.5.0",
+		"eslint-plugin-jsdoc": "^15.9.5",
+		"toriel": "gist:136019c79f2ee043c1d8372ba6bf14d7",
+		"typescript": "^3.6.3",
+		"@types/node": "^12.7.8"
 	}
 }

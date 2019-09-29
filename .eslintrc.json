@@ -4,7 +4,11 @@
 		"es6": true,
 		"node": true
 	},
-	"extends": "eslint:recommended",
+	"plugins": [ "jsdoc" ],
+	"extends": [
+		"eslint:recommended",
+		"plugin:jsdoc/recommended"
+	],
 	"globals": {
 		"Atomics": "readonly",
 		"SharedArrayBuffer": "readonly"
@@ -14,6 +18,8 @@
 		"sourceType": "module"
 	},
 	"rules": {
+		"no-fallthrough": "off",
+		"no-console": "off",
 		"indent": [
 			"error",
 			"tab"
@@ -21,9 +27,6 @@
 		"linebreak-style": [
 			"error",
 			"unix"
-		],
-		"no-fallthrough": [
-			"off"
 		],
 		"semi": [
 			"error",
