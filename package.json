@@ -1,6 +1,6 @@
 {
 	"name": "variable-irony",
-	"version": "0.9.0",
+	"version": "0.9.1",
 	"description": "A pseudo-variable library for managing cached data and environment variables.",
 	"main": "lib",
 	"scripts": {
