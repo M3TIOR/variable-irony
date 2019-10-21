@@ -74,17 +74,17 @@ function linkEnvironmentVariable(name, realName, initializer, scope){
 	// leave type checking for the linter
 
 	// At least check that the name and realName values are not empty.
-	if ( ! name.length )
+	if ( name && name.length == null )
 		throw Error(`"name" argument cannot be empty.`);
 
-	if ( ! ( realName != null || realName.length ) )
+	if ( realName && ! realName.length )
 		throw Error(`"realName" argument cannot be empty.`);
 
 	if ( initializer == null ) initializer = ""; // lazy equivalence for null is okay.
 	if ( scope == null ) scope = superglobal; // No target scope? Use global!
 
 	if (realName == null) {
-		if (name.search(/(?:[a-z\d]+)(?:[A-Z][a-z\d]+)*/g)[0] === name){
+		if (name.match(/(?:[a-z\d]+)(?:[A-Z][a-z\d]+)*/g)[0] === name){
 			// Try parsing as camelCase for TypeScript and JavaScript
 			realName = name.replace(/([A-Z])/g, "_$1").toUpperCase();
 		}
@@ -97,14 +97,16 @@ function linkEnvironmentVariable(name, realName, initializer, scope){
 	}
 
 	Object.defineProperty(scope, name, {
-		get:() => env[name],
-		set:(value) => env[name] = String(value),
+		get:() => env[realName],
+		set:(value) => env[realName] = String(value),
 	});
 
 	// finally, we set our initial value for the variable if we have one.
-	if ( env[name] == null )
+	if ( scope[name] == null )
 		// only when our saved value is unset, otherwise it defeats the purpose
-		env[name] = initializer;
+		scope[name] = initializer;
+
+	return realName;
 }
 
 

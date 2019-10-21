@@ -44,20 +44,23 @@ const { superglobal } = require("./universal.js");
 
 // Standard Includes
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 
 
-// Unnecessary in the browser.
 /**
  * @constant
  * @package
  * @summary - A constant assignment containing the location of our data store.
  */
-const appdata = process.env.APPDATA || ( // WINDOWS
-	process.platform == 'darwin' ?
-		process.env.HOME + 'Library/Preferences' : // MAC OS
-		process.env.HOME + "/.local/share" // LINUX, ANDROID, SUNOS
+const dataStore = (
+	process.env.APPDATA || // WINDOWS, should always be full path.
+	os.platform() !== "win32" && os.homedir() ?
+			path.join( os.homedir(), process.platform == 'darwin' ?
+					'Library/Preferences' : // MAC OS
+					'.local/share' /* LINUX, ANDROID, SUNOS */ ) :
+	fs.mkdtempSync(path.join(os.tmpdir(), "variable-irony.datastore.tmp.")) // Environment shield.
 );
 
 /**
@@ -65,7 +68,7 @@ const appdata = process.env.APPDATA || ( // WINDOWS
  * @package
  * @description Declares a place for us to cache variables for saving in NodeJS.
  */
-const cache_path = path.join(appdata, "irony-cache.json");
+const cache_path = path.join(dataStore, "irony-cache.json");
 const cache = {};
 
 
@@ -110,17 +113,17 @@ const cache = {};
  */
 function linkEnvironmentVariable(name, realName, initializer, scope){
 
-	if ( ! name.length )
+	if ( name && name.length == null )
 		throw Error(`"name" argument cannot be empty.`);
 
-	if ( ! ( realName != null || realName.length ) )
+	if ( realName && ! realName.length )
 		throw Error(`"realName" argument cannot be empty.`);
 
 	if (initializer == null) initializer = "";
 	if (scope == null) scope = superglobal; // No target scope? Use global!
 
 	if (realName == null) {
-		if (name.search(/(?:[a-z\d]+)(?:[A-Z][a-z\d]+)*/g)[0] === name){
+		if (name.match(/(?:[\da-z]+)(?:[A-Z][\da-z]+)*/g)[0] === name){
 			// Try parsing as camelCase for TypeScript and JavaScript
 			realName = name.replace(/([A-Z])/g, "_$1").toUpperCase();
 		}
@@ -133,9 +136,14 @@ function linkEnvironmentVariable(name, realName, initializer, scope){
 	}
 
 	Object.defineProperty(scope, name, {
-		get:() => process.env[name],
-		set:(value) => process.env[name] = String(value),
+		get:() => process.env[realName],
+		set:(value) => process.env[realName] = String(value),
 	});
+
+	if (scope[name] == null)
+		scope[name] = String(initializer);
+
+	return realName;
 }
 
 
@@ -249,8 +257,10 @@ try{
 	// Check that we have access to our cache object just in case we don't.
 	// These are on separate lines so we can conditionally handle
 	// each use case.
-	fs.accessSync(cache_path, fs.constants.R_OK);
-	fs.accessSync(cache_path, fs.constants.W_OK);
+	if ( fs.existsSync(cache_path) ) {
+		fs.accessSync(cache_path, fs.constants.R_OK);
+		fs.accessSync(cache_path, fs.constants.W_OK);
+	}
 
 	for (let event of ['exit', 'SIGTERM', 'SIGINT', 'SIGHUP', ]) {
 		// @ts-ignore
@@ -268,28 +278,57 @@ try{
 			 * @todo - Pass through SIGTERM & SIGINT default behavior because
 			 *   catching those signals destroys the default event catch.
 			 */
-			fs.writeFileSync(appdata, JSON.stringify(cache), {encoding: "UTF-8"});
+			fs.writeFileSync(cache_path, JSON.stringify(cache), {encoding: "UTF-8"});
+
+			// Remove temporary data store.
+			if ( dataStore.startsWith(os.tmpdir()) ) {
+				let remaining = fs.readdirSync(dataStore, { withFileTypes: true })
+					.map(dirent => dirent.name = path.join(dataStore, dirent.name));
+
+				for (let dirent of remaining) {
+					if ( dirent.isDirectory() ) {
+						let contents = fs.readdirSync(dirent.name, { withFileTypes: true })
+							.map(dirent => dirent.name = path.join(dataStore, dirent.name));
+
+						if ( contents.length )
+							remaining.push.apply( null, contents.concat([dirent]));
+						else
+							fs.rmdirSync(current_dir);
+					}
+					else {
+						fs.unlinkSync(dirent.name);
+					}
+
+					remaining_dirents.shift();
+				}
+				fs.rmdirSync(dataStore);
+			}
 		});
 	}
 
-	let loaded = JSON.parse(fs.readFileSync(cache_path, {encoding: "UTF-8"}));
+	if ( fs.existsSync(cache_path) ) {
+		let loaded = JSON.parse(fs.readFileSync(cache_path, {encoding: "UTF-8"}));
+		Object.assign(cache, loaded);
+	}
 
-	Object.assign(cache, loaded);
+	// ensure our temporary data store is available when we need it.
+	if ( dataStore.startsWith(os.tmpdir()) )
+		fs.mkdirSync(dataStore, { recursive: true });
 }
 catch (err) {
-	let lineNumber = err.stackTrace.split("at")[1].match(/.*(\d+):\d+$/)[1];
+	console.error(err);
 
-	switch (lineNumber){
-	case "252": // Must match line number of accessSync Readable check.
-		console.error(`Cannot read cache data from disk: ${err.message}`);
-	case "253": // Must match line number of accessSync Writable check.
-		// If we cannot read just assume we cannot write for data integrity.
-		console.warn(`Cannot write to cache. Any cache data written will not be saved durring this session.`);
-	break; // eslint-disable-line
-
-	default:
-		throw Error(`Unknown access error signature: ${lineNumber}`);
-	}
+	// switch (lineNumber){
+	// case "252": // Must match line number of accessSync Readable check.
+	// 	console.error(`Cannot read cache data from disk: ${err.message}`);
+	// case "253": // Must match line number of accessSync Writable check.
+	// 	// If we cannot read just assume we cannot write for data integrity.
+	// 	console.warn(`Cannot write to cache. Any cache data written will not be saved durring this session.`);
+	// break; // eslint-disable-line
+	//
+	// default:
+	// 	throw Error(`Unknown access error signature: ${lineNumber}`);
+	// }
 }
 
 
