@@ -46,5 +46,18 @@
  */
 const superglobal = (new Function("return this;"))();
 
+class CacheReadEvent extends CustomEvent {
+	constructor(key, value) {
+		super('readingirony', { detail: { key, value }, });
+	}
+}
+
+class CacheWriteEvent extends CustomEvent{
+	constructor(key, value) {
+		super('writingirony', { detail: { key, value }, });
+	}
+}
+
+
 
 module.exports = { superglobal };

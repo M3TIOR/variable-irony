@@ -68,8 +68,9 @@ const dataStore = (
  * @package
  * @description Declares a place for us to cache variables for saving in NodeJS.
  */
-const cache_path = path.join(dataStore, "irony-cache.json");
-const cache = {};
+const persistent_cache_path = path.join(dataStore, "irony-cache.json");
+const temporary_cache_path
+const memory_cache = {};
 
 
 
@@ -250,86 +251,212 @@ function createCachedVariable(name, initializer, scope){
 		scope[name] = initializer;
 }
 
+function trySaveToDisk(object, location){
+	try{
+		// Check that we have access to our cache object just in case we don't.
+		// These are on separate lines so we can conditionally handle
+		// each use case.
+		if ( fs.existsSync(location) ) {
+			fs.accessSync(location, fs.constants.R_OK);
+			fs.accessSync(location, fs.constants.W_OK);
+		}
+		else {
+			fs.mkdirSync()
+		}
 
+		for (let event of ['exit', 'SIGTERM', 'SIGINT', 'SIGHUP', ]) {
+			// @ts-ignore
+			process.on(event, ()=>{ // (code)
+				/**
+				 * @package
+				 * @listens exit
+				 * @listens SIGTERM
+				 * @listens SIGINT
+				 * @listens SIGHUP
+				 * @description - Captures the before exit event to flush cache to disk.
+				 *
+				 * @todo - Maybe catch SIGHUP in own event that spawns detatched
+				 *   background process to finish writing to the cache.
+				 * @todo - Pass through SIGTERM & SIGINT default behavior because
+				 *   catching those signals destroys the default event catch.
+				 */
+				fs.writeFileSync(cache_path, JSON.stringify(cache), {encoding: "UTF-8"});
 
-// Execute On-Load
-try{
-	// Check that we have access to our cache object just in case we don't.
-	// These are on separate lines so we can conditionally handle
-	// each use case.
-	if ( fs.existsSync(cache_path) ) {
-		fs.accessSync(cache_path, fs.constants.R_OK);
-		fs.accessSync(cache_path, fs.constants.W_OK);
-	}
+				// Remove temporary data store.
+				if ( dataStore.startsWith(os.tmpdir()) ) {
+					let remaining = fs.readdirSync(dataStore, { withFileTypes: true })
+						.map(dirent => dirent.name = path.join(dataStore, dirent.name));
 
-	for (let event of ['exit', 'SIGTERM', 'SIGINT', 'SIGHUP', ]) {
-		// @ts-ignore
-		process.on(event, ()=>{ // (code)
-			/**
-			 * @package
-			 * @listens exit
-			 * @listens SIGTERM
-			 * @listens SIGINT
-			 * @listens SIGHUP
-			 * @description - Captures the before exit event to flush cache to disk.
-			 *
-			 * @todo - Maybe catch SIGHUP in own event that spawns detatched
-			 *   background process to finish writing to the cache.
-			 * @todo - Pass through SIGTERM & SIGINT default behavior because
-			 *   catching those signals destroys the default event catch.
-			 */
-			fs.writeFileSync(cache_path, JSON.stringify(cache), {encoding: "UTF-8"});
+					for (let dirent of remaining) {
+						if ( dirent.isDirectory() ) {
+							let contents = fs.readdirSync(dirent.name, { withFileTypes: true })
+								.map(dirent => dirent.name = path.join(dataStore, dirent.name));
 
-			// Remove temporary data store.
-			if ( dataStore.startsWith(os.tmpdir()) ) {
-				let remaining = fs.readdirSync(dataStore, { withFileTypes: true })
-					.map(dirent => dirent.name = path.join(dataStore, dirent.name));
+							if ( contents.length )
+								remaining.push.apply( null, contents.concat([dirent]));
+							else
+								fs.rmdirSync(current_dir);
+						}
+						else {
+							fs.unlinkSync(dirent.name);
+						}
 
-				for (let dirent of remaining) {
-					if ( dirent.isDirectory() ) {
-						let contents = fs.readdirSync(dirent.name, { withFileTypes: true })
-							.map(dirent => dirent.name = path.join(dataStore, dirent.name));
-
-						if ( contents.length )
-							remaining.push.apply( null, contents.concat([dirent]));
-						else
-							fs.rmdirSync(current_dir);
+						remaining_dirents.shift();
 					}
-					else {
-						fs.unlinkSync(dirent.name);
-					}
-
-					remaining_dirents.shift();
+					fs.rmdirSync(dataStore);
 				}
-				fs.rmdirSync(dataStore);
+			});
+		}
+
+		if ( fs.existsSync(cache_path) ) {
+			let loaded = JSON.parse(fs.readFileSync(cache_path, {encoding: "UTF-8"}));
+			Object.assign(cache, loaded);
+		}
+
+		// ensure our temporary data store is available when we need it.
+		if ( dataStore.startsWith(os.tmpdir()) )
+			fs.mkdirSync(dataStore, { recursive: true });
+	}
+	catch (err) {
+		console.error(err);
+
+		// switch (lineNumber){
+		// case "252": // Must match line number of accessSync Readable check.
+		// 	console.error(`Cannot read cache data from disk: ${err.message}`);
+		// case "253": // Must match line number of accessSync Writable check.
+		// 	// If we cannot read just assume we cannot write for data integrity.
+		// 	console.warn(`Cannot write to cache. Any cache data written will not be saved durring this session.`);
+		// break; // eslint-disable-line
+		//
+		// default:
+		// 	throw Error(`Unknown access error signature: ${lineNumber}`);
+		// }
+	}
+}
+}
+
+/**
+ * @public
+ * @function IronicEnvironment
+ * @param {object} defaults - An object containing values to be garranteed
+ *   set in the global environment upon initialization.
+ *
+ * @description - A proxy scope generator for environment variables.
+ *   Initially, we were planning on making this more fully featured, with added
+ *   support for environment encapsulation and other "usefull" things. But we
+ *   realized that the only current use for an operating environment is at the
+ *   operating system level, there's no use for it in the browser currently.
+ *   So now, this API feature is implemented as a platform independent way of
+ *   accessing and modifying environment variables.
+ */
+class IronicEnvironment extends Proxy {
+	constructor(defaults) {
+		if (typeof settings !== "object")
+			throw Error(`Expected 'overrides' object be of type 'object' but got '${typeof overrides}.'`);
+
+		// Sanitize the overrides so they comply with environment variable standards;
+		for ( variable in settings.overrides )
+			overrides[variable] = String(overrides[variable]);
+
+		// copy process.env variables overtop overrides and re-assign global.
+		process.env = Object.assign(overrides, process.env);
+
+		super(process.env, {
+			set:(target, property, value, reciever) => {
+				// Also sanitize the newly passed variables upon set.
+				target[property] = String(value);
+				return value;
+			}
+			get:(target, property, reciever) => {
+				return target[property];
 			}
 		});
 	}
+}
 
-	if ( fs.existsSync(cache_path) ) {
-		let loaded = JSON.parse(fs.readFileSync(cache_path, {encoding: "UTF-8"}));
-		Object.assign(cache, loaded);
+/**
+ * @public
+ * @function SessionIrony
+ *
+ * @description - A proxy scope generator for cached data. Used to create
+ *   a session cache object which can be added to instantaniously from
+ *   within javascript, and will be available until application reload.
+ *
+ */
+class SessionIrony extends Proxy {
+	constructor() {
+		let session_cache = {};
+
+		super(session_cache, {
+			set:(target, property, value, reciever) => {
+				reciever.dispatchEvent(CacheWriteEvent(property, value));
+				target[property] = value;
+				return value;
+			}
+			get:(target, property, reciever) => {
+				reciever.dispatchEvent(CacheReadEvent(property, target[property]));
+				return target[property];
+			}
+		});
 	}
-
-	// ensure our temporary data store is available when we need it.
-	if ( dataStore.startsWith(os.tmpdir()) )
-		fs.mkdirSync(dataStore, { recursive: true });
 }
-catch (err) {
-	console.error(err);
 
-	// switch (lineNumber){
-	// case "252": // Must match line number of accessSync Readable check.
-	// 	console.error(`Cannot read cache data from disk: ${err.message}`);
-	// case "253": // Must match line number of accessSync Writable check.
-	// 	// If we cannot read just assume we cannot write for data integrity.
-	// 	console.warn(`Cannot write to cache. Any cache data written will not be saved durring this session.`);
-	// break; // eslint-disable-line
-	//
-	// default:
-	// 	throw Error(`Unknown access error signature: ${lineNumber}`);
-	// }
+/**
+ * @public
+ * @function PersistentIrony
+ *
+ * @description - A proxy scope generator for cached data. Used to create
+ *   a persistent storage object which can be added to instantaniously from
+ *   within javascript, and will be available after application reload with
+ *   the same states from previous runs.
+ *
+ */
+class PersistentIrony extends Proxy{
+	constructor(nameOLoc, saveFrequencyMS) {
+		let cache = {};
+
+		if (saveFrequencyMS != null) {
+			let intSaveFrequencyMS = parseInt(saveFrequencyMS);
+			if (! isNaN(intSaveFrequencyMS)) {
+				let saveTimerLoop = function(){
+
+				};
+
+				while (true) {
+					// Use while loop to recur over try catch statement,
+					// this way error logging doesn't get potentially screwed.
+					let iv = null;
+					try { iv = setInterval(saveTimerLoop, intSaveFrequencyMS); }
+					catch(error) {
+
+					}
+				}
+			}
+			else {
+
+			}
+		}
+		else { // null / undefined
+			// Only save upon close / shutdown.
+		}
+
+		super(cache, {
+			set:(target, property, value, reciever) => {
+				reciever.dispatchEvent(CacheWriteEvent(property, value));
+				target[property] = value;
+				return value;
+			}
+			get:(target, property, reciever) => {
+				reciever.dispatchEvent(CacheReadEvent(property, target[property]));
+				return target[property];
+			}
+		});
 }
+
+
+
+// Execute On-Load
+
 
 
 module.exports = {
