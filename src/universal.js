@@ -52,7 +52,7 @@ class CacheReadEvent extends CustomEvent {
 	}
 }
 
-class CacheWriteEvent extends CustomEvent{
+class CacheWriteEvent extends CustomEvent {
 	constructor(key, value) {
 		super('writingirony', { detail: { key, value }, });
 	}

@@ -4,7 +4,7 @@
   "description": "A pseudo-variable library for managing cached data and environment variables.",
   "main": "src",
   "scripts": {
-    "test": "jest",
+    "test": "jest -c .jest.json",
     "lint": "toriel 'src/**/*.js'",
     "build-docs": "jsdoc -c ./.jsdoc.json;"
   },

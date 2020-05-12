@@ -21,6 +21,11 @@ Due to my also incomplete consensus project, this thing is not spectrum tested
 and may break upon use so please be weary of that and submit bug reports
 when and if you can. I'd really appreciate it.
 
+#### Todo:
+ [] - Add babel support for legacy and multiarch support.
+ [] - Add Jest support for full release candidate.
+ [] - Try migrating getters and setters from one variable to another using Object.create in a constructor.
+
 On to the code:
 
 ## THE MODULE!
