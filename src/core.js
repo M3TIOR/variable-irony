@@ -40,7 +40,7 @@
 const { superglobal } = require("./universal.js");
 
 // External Includes
-//...
+// const ps = require('ps-node'); (will probs make my own native lib for this)
 
 // Standard Includes
 const fs = require('fs');
@@ -49,30 +49,131 @@ const path = require('path');
 
 
 
-/**
- * @constant
- * @package
- * @summary - A constant assignment containing the location of our data store.
- */
-const dataStore = (
-	process.env.APPDATA || // WINDOWS, should always be full path.
-	os.platform() !== "win32" && os.homedir() ?
-			path.join( os.homedir(), process.platform == 'darwin' ?
-					'Library/Preferences' : // MAC OS
-					'.local/share' /* LINUX, ANDROID, SUNOS */ ) :
-	fs.mkdtempSync(path.join(os.tmpdir(), "variable-irony.datastore.tmp.")) // Environment shield.
+
+let persistentDataStore = null;
+let temporaryDataStore = null;
+const metadataSignature = new RegExp([
+		t`^I(?<knownInstance>\d+)`,
+		t`T(?<startTime>\d+)`,
+		t`PID(?<pid>\d+)`,
+		t`-.*`,
+	].join("") // for once I don't need the global flag.
 );
+const rhetoricRegistry = new Map();
+
+
 
 /**
- * @constant
  * @package
- * @description Declares a place for us to cache variables for saving in NodeJS.
+ * @summary - creates a temporary data store using the identity provided.
  */
-const persistent_cache_path = path.join(dataStore, "irony-cache.json");
-const temporary_cache_path
-const memory_cache = {};
+function getTemporaryDataStore(options){
+	if (temporaryDataStore != null) return temporaryDataStore;
 
+	const programExtension = path.extname(process.argv0);
+	const programName = path.basename(process.argv0, programExtension);
 
+	// TODO: perhaps use package name via package.json first instead of path.
+
+	const defaults = {
+		// Options passed directly to the getTemporaryDataStore
+		programName,
+		attemptRecovery: false,
+	};
+
+	options = Object.assign(options, {
+		// assign default arguments
+		attemptRecovery: false, // will be disabled until further notice.
+	});
+
+	const tmpdir = os.tmpdir(); // slightly quicker than calling the native twice.
+	const { username } = os.userInfo(); // get from OS Userinfo (cross platform)
+	const pid = process.pid.toString();
+	let kI = 0;
+
+	// if (options.attemptRecovery == true) {
+	// 	const recoveryOptions = fs.readDirSync(tmpdir);
+	// 		.map((dirname) => {
+	// 			const progusersignature = `${programname}U${username}`;
+	// 			if (dirname.startsWith(progusersignature)) {
+	// 				const identityMetadata = dirname.slice(progusersignature.length);
+	// 				const result = identityMetadata.match(metadataSignature);
+	//
+	// 				if (result[0] === dirname) return result.groups;
+	// 			}
+	// 		})
+	// 		.filter((signature)=>{
+	//
+	// 		});
+	//
+	// 	for (const dir of recoveryOptions) {
+	//
+	// 	}
+	// }
+	// else if (typeof options.attemptRecovery === 'string') {
+	// 	return path.join(tmpdir, options.attemptRecovery);
+	// }
+
+	const time = Date.now();
+	const identity = `${programname}U${username}I${kI}T${time}PID${pid}-`;
+	return fs.mktmpdir(path.join(tmpdir, identity));
+}
+
+/**
+ * @package
+ * @summary - creates the persistent data store using the identity provided.
+ */
+function getPersistentDataStore(options){
+	if (persistentDataStore != null)
+		return persistentDataStore;
+
+	const programExtension = path.extname(process.argv0);
+	const programName = path.basename(process.argv0, programExtension);
+
+	const defaults = {
+		// Options passed directly to the getTemporaryDataStore
+		programName,
+		strict: false,
+		temporaryFallbackOptions:{ programName, attemptRecovery: true },
+	};
+
+	// Assign default arguments, overwrite them with passed options.
+	options = Object.assign(defaults, options);
+
+	// Try not to allocate the result memory unless we need it.
+	let resultPath = null;
+	if (process.env.APPDATA) {
+		// Winderps has to be the only one to break the Posix standard...
+		resultPath = path.join(process.env.APPDATA, options.options.programName);
+	}
+	else {
+		const homedir = os.homedir();
+
+		if (homedir) {
+			const platform = os.platform();
+
+			if (platform === 'win32')
+				resultPath = path.join(homedir, options.programName);
+			else if (platform === 'darwin') // MAC OS
+				resultPath = path.join(homedir, 'Library/Preferences', options.programName);
+			else /* LINUX, ANDROID, SUNOS */
+				resultPath = path.join(homedir, '.local/share', options.programName);
+		}
+		else {
+			// TODO: improve this error reporting with an error type instantiator
+			//   that will improve the available methods for error handling.
+			if (strict)
+				throw "Could not find the persistent Data Store.";
+
+			// As a fallback, if for some reason we can't find the persistent
+			// data store, use the temporary one instead. (only when strict is disabled)
+			return persistentDataStore = getTemporaryDataStore(options.temporaryFallbackOptions);
+		}
+	}
+
+	// assignment fallthrough (Should == resultPath)
+	return persistentDataStore = os.mkdirSync(resultPath, { recursive: true });
+}
 
 /**
  * @public
@@ -374,93 +475,126 @@ class IronicEnvironment extends Proxy {
 	}
 }
 
-/**
- * @public
- * @function SessionIrony
- *
- * @description - A proxy scope generator for cached data. Used to create
- *   a session cache object which can be added to instantaniously from
- *   within javascript, and will be available until application reload.
- *
- */
-class SessionIrony extends Proxy {
+class Metacommunication extends EventEmitter {
 	constructor() {
-		let session_cache = {};
+		super(); // Initialize EventEmitter features
+		this._context = {};
 
-		super(session_cache, {
+		this._revocable = Proxy.revocable(this._context, {
 			set:(target, property, value, reciever) => {
-				reciever.dispatchEvent(CacheWriteEvent(property, value));
+				//console.log(`target: ${target}\n property: ${property}\n value: ${value}\nreciever: ${reciever}`);
+				//reciever.dispatchEvent(CacheWriteEvent(property, value));
+				this.emit("writing-irony", property, value);
 				target[property] = value;
 				return value;
-			}
+			},
 			get:(target, property, reciever) => {
-				reciever.dispatchEvent(CacheReadEvent(property, target[property]));
-				return target[property];
+				//console.log(`target: ${target}\n property: ${property}\nreciever: ${reciever}`);
+				//reciever.dispatchEvent(CacheReadEvent(property, target[property]));
+				const value = target[property];
+				this.emit("reading-irony", property, value);
+				return value;
 			}
 		});
+
+		this.store = this._revocable.proxy;
+	}
+
+	revoke() {
+		// You don't want to be funny the right way!? Well too fuckin' bad!
+		this.emit("revoking-irony");
+		this._revokable.revoke();
 	}
 }
 
 /**
  * @public
- * @function PersistentIrony
+ * @function TemporaryRhetorical
  *
  * @description - A proxy scope generator for cached data. Used to create
- *   a persistent storage object which can be added to instantaniously from
- *   within javascript, and will be available after application reload with
- *   the same states from previous runs.
- *
+ *   a cache object which will last until the operating system is rebooted.
  */
-class PersistentIrony extends Proxy{
-	constructor(nameOLoc, saveFrequencyMS) {
-		let cache = {};
+class TemporaryRhetorical extends Metacommunication {
+	constructor(name, options) {
+		super(); // other things
 
-		if (saveFrequencyMS != null) {
-			let intSaveFrequencyMS = parseInt(saveFrequencyMS);
-			if (! isNaN(intSaveFrequencyMS)) {
-				let saveTimerLoop = function(){
+		// Optional argument permutations.
+		if (options.dataStore == null) {
+			options.dataStore = getTemporaryDataStore({
+				programName: options.programName,
+			});
+		}
 
-				};
+		if (options.serializer == null) {
+			options.serializer = JSON;
+		}
 
-				while (true) {
-					// Use while loop to recur over try catch statement,
-					// this way error logging doesn't get potentially screwed.
-					let iv = null;
-					try { iv = setInterval(saveTimerLoop, intSaveFrequencyMS); }
-					catch(error) {
+		this.name = name;
+		this.fileLocation = path.join(options.dataStore, `${this.name}.irony`);
+		this.serializer = options.serializer;
+		this.saveFrequency = options.saveFrequency;
 
+		this._iv = null;
+		const saveFN = this.save.bind(this);
+		if (typeof this.saveFrequency === 'integer') {
+			this._iv = setInterval(saveFN, this.saveFrequency);
+		}
+		else if (typeof this.saveFrequency === 'string') {
+			if (this.saveFrequency === "on-write") {
+				this.on("writing-irony", this.save);
+				this._iv = true;
+			}
+		}
+		else {
+			this._iv = false;
+		}
+
+		// TODO:
+		//   attempt reload after I get the temporary store recovery feature
+		//   up and running. (That's a way down the line).
+	}
+
+	async save(){
+		const ivType = typeof this._iv;
+
+		// Publishing even happens outside the safety query because otherwise
+		// it may break things.
+		this.emit("publishing-irony");
+
+		if (ivType !== 'undefined') {
+			const data = this.serializer.stringify(this._context);
+			const options = {}; // just in case we need to edit these later.
+
+			fs.writeFile(this.fileLocation, data, options, (err) => {
+				if (err) {
+					if (this._iv == true) {
+						if (typeof this._iv === 'integer')
+							clearInterval(this._iv);
+						else if (typeof this._iv === 'boolean' && this._iv === true)
+							this.removeListener('writing-irony', this.save);
+
+						console.error(`Stopping save loop for rhetorical '${this.name}';`);
 					}
+
+					console.error(`An error occured: ${err.message}.`);
+					console.error(`Saving rhetorical '${this.name}' is now disabled.`)
+					this._iv = null;
 				}
-			}
-			else {
-
-			}
+			});
 		}
-		else { // null / undefined
-			// Only save upon close / shutdown.
-		}
+	}
+}
 
-		super(cache, {
-			set:(target, property, value, reciever) => {
-				reciever.dispatchEvent(CacheWriteEvent(property, value));
-				target[property] = value;
-				return value;
-			}
-			get:(target, property, reciever) => {
-				reciever.dispatchEvent(CacheReadEvent(property, target[property]));
-				return target[property];
-			}
-		});
+function makeTemporaryIrony(name, options) {
+	const rhetorical = new TemporaryRhetorical(name, options);
+	rhetoricRegistry.set(manager.store, rhetorical);
+	return {store: rhetorical.store, rhetorical};
 }
 
 
-
-// Execute On-Load
-
-
-
-module.exports = {
+export default {
 	superglobal,
 	createCachedVariable,
-	linkEnvironmentVariable
-};
+	linkEnvironmentVariable,
+
+}
